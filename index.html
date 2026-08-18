@@ -148,10 +148,16 @@
                         </select>
                     </div>
                 </div>
+                <div class="mt-4">
+                    <label class="block text-sm font-semibold text-slate-600 mb-1">Cidade (opcional)</label>
+                    <input type="text" id="cidadeOpcionalInput" placeholder="Ex: Vitória — ativa a triangulação via mapa (OpenStreetMap)" class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm">
+                    <p class="text-xs text-slate-400 mt-1">Se preenchida e o segmento tiver mapeamento no mapa, o Radar primeiro localiza nomes reais de estabelecimentos na cidade e só depois busca cada um no Instagram/LinkedIn/Facebook — mais preciso, mas consome mais cota da Tavily (até 8 buscas extra por vez, em vez de 1). Deixe em branco para o comportamento padrão.</p>
+                </div>
                 <button onclick="rodarRadar()" id="btnRodarRadar" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow transition">
                     <i class="fa-solid fa-play mr-2"></i> INICIAR RADAR
                 </button>
                 <div id="loadingRadar" class="mt-3 font-medium hidden"></div>
+                <div id="statusTriagemFiscal" class="mt-2 text-xs text-slate-500"></div>
 
                 <!-- Painel de Diagnóstico (temporário, para descobrir por que o Radar não acha leads) -->
                 <div id="debugPanel" class="hidden mt-4 border border-amber-300 bg-amber-50 rounded-lg p-4 text-sm">
@@ -181,12 +187,18 @@
                             <input type="checkbox" id="filtroRiscoAlto" checked onchange="renderLeads()">
                             Ocultar risco alto de marca já registrada
                         </label>
+                        <label class="flex items-center gap-2 px-3 py-2 text-xs text-slate-600 border-b bg-slate-50 cursor-pointer">
+                            <input type="checkbox" id="filtroDescartadoFiscal" checked onchange="renderLeads()">
+                            Ocultar descartados na triagem fiscal (CNPJ)
+                        </label>
                         <ul id="listaLeads" class="overflow-y-auto flex-1 divide-y divide-slate-100"></ul>
                     </div>
                     <!-- Coluna Direita -->
                     <div id="painelAcao" class="xl:col-span-2 glass-card rounded-xl p-8 hidden flex-col">
                         <h2 id="leadNome" class="text-2xl font-bold">Empresa</h2>
                         <a id="leadInsta" href="#" target="_blank" class="text-blue-600 font-medium mb-6">@insta</a>
+                        <div id="triagemFiscalContainer" class="mb-4"></div>
+                        <div id="auditoriaSocioContainer" class="mb-4"></div>
                         
                         <button onclick="checarINPI()" class="bg-slate-800 text-white px-4 py-2 rounded font-medium mb-4 w-48">1. Checar INPI</button>
                         <button onclick="verificarEndereco()" class="bg-emerald-700 text-white px-4 py-2 rounded font-medium mb-4 w-56">
@@ -217,12 +229,145 @@
         let currentLeads = [];
         let selectedLead = null;
 
+        const ETAPAS_VENDA = ['Frio', 'Sócio Contatado', 'Em Negociação', 'Fechado', 'Perdido'];
+        const CHAVE_PIPELINE = 'edv_pipeline';
+
+        // ------------------------------------------------------------------
+        // MÓDULO DE PERSISTÊNCIA (localStorage)
+        // ------------------------------------------------------------------
+        // Guarda o array de leads (com triagem fiscal, sócio e copy gerada já
+        // inclusos) no navegador, para sobreviver a um F5 acidental. Isso é
+        // por navegador/dispositivo — não é um banco compartilhado entre
+        // membros da equipe, e uma nova busca no Radar substitui o que
+        // estava salvo (não acumula histórico entre buscas diferentes).
+        function salvarEstado() {
+            try {
+                localStorage.setItem(CHAVE_PIPELINE, JSON.stringify(currentLeads));
+            } catch (e) {
+                console.warn('[EDV Prospector] Não foi possível salvar o estado local:', e.message);
+            }
+        }
+
+        function carregarEstado() {
+            try {
+                const salvo = localStorage.getItem(CHAVE_PIPELINE);
+                if (!salvo) return;
+                const leads = JSON.parse(salvo);
+                if (!Array.isArray(leads) || leads.length === 0) return;
+
+                currentLeads = leads;
+                renderLeads();
+                document.getElementById('leadsContainer').classList.remove('hidden');
+            } catch (e) {
+                console.warn('[EDV Prospector] Não foi possível restaurar o estado local:', e.message);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // MÓDULO DE TRIANGULAÇÃO GEOESPACIAL (Overpass API / OpenStreetMap)
+        // ------------------------------------------------------------------
+        // Traduz nosso "Segmento" (texto livre em português) para tags reais
+        // do OpenStreetMap (padronizadas, em inglês). Segmentos sem mapeamento
+        // aqui simplesmente pulam a triangulação e caem no fluxo padrão —
+        // nunca quebram a busca.
+        const NICHO_PARA_TAG_OSM = {
+            'Clínica de Estética': '["shop"="beauty"]',
+            'Academia': '["leisure"="fitness_centre"]',
+            'Clínica Odontológica': '["amenity"="dentist"]',
+            'Clínica Médica': '["amenity"="clinic"]',
+            'Clínica de Fisioterapia': '["healthcare"="physiotherapist"]',
+            'Clínica de Psicologia': '["healthcare"="psychotherapist"]',
+            'Farmácia de Manipulação': '["amenity"="pharmacy"]',
+            'Ótica': '["shop"="optician"]',
+            'Salão de Beleza': '["shop"="hairdresser"]',
+            'Barbearia': '["shop"="hairdresser"]',
+            'Loja de Roupas': '["shop"="clothes"]',
+            'Loja de Calçados': '["shop"="shoes"]',
+            'Semijoias': '["shop"="jewelry"]',
+            'Restaurante': '["amenity"="restaurant"]',
+            'Hamburgueria': '["amenity"="fast_food"]',
+            'Pizzaria': '["amenity"="restaurant"]',
+            'Confeitaria': '["shop"="pastry"]',
+            'Cafeteria': '["amenity"="cafe"]',
+            'Escritório de Advocacia': '["office"="lawyer"]',
+            'Escritório de Contabilidade': '["office"="accountant"]',
+            'Consultoria Empresarial': '["office"="consulting"]',
+            'Escritório de Arquitetura': '["office"="architect"]',
+            'Agência de Marketing Digital': '["office"="advertising_agency"]',
+            'Imobiliária': '["office"="estate_agent"]',
+            'Loja de Eletrônicos': '["shop"="electronics"]',
+            'Papelaria': '["shop"="stationery"]',
+            'Floricultura': '["shop"="florist"]',
+            'Pet Shop': '["shop"="pet"]',
+            'Clínica Veterinária': '["amenity"="veterinary"]',
+            'Escola de Idiomas': '["amenity"="language_school"]',
+            'Pousada': '["tourism"="guest_house"]',
+            'Oficina Mecânica': '["shop"="car_repair"]',
+            'Concessionária': '["shop"="car"]'
+            // Segmentos sem equivalente físico claro no OSM (Personal Trainer,
+            // Nutricionista, Construtora, Curso Livre, Startup de Tecnologia,
+            // Buffet de Festas, Loja Virtual) ficam de fora de propósito —
+            // caem no fluxo padrão (Tavily direto) em vez de dar 0 resultado.
+        };
+
+        const MAX_NOMES_TRIANGULACAO = 8; // limite de créditos Tavily extras por busca
+
+        // Busca nomes reais de estabelecimentos no OpenStreetMap, restritos à
+        // cidade dentro do estado selecionado (evita colisão entre cidades
+        // homônimas de estados diferentes). Retorna null se não der pra
+        // triangular (sem mapeamento de tag, sem área encontrada, ou erro) —
+        // nunca lança exceção para quem chamou.
+        async function buscarNomesViaOverpass(nicho, cidade, estado) {
+            const filtroTag = NICHO_PARA_TAG_OSM[nicho];
+            if (!filtroTag) return null;
+
+            const query = `[out:json][timeout:25];
+area["name"="${estado}"]["admin_level"="4"]->.estadoArea;
+area["name"="${cidade}"]["admin_level"="8"](area.estadoArea)->.searchArea;
+(
+  node${filtroTag}(area.searchArea);
+);
+out 20;`;
+
+            try {
+                const resp = await fetch('https://overpass-api.de/api/interpreter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'data=' + encodeURIComponent(query)
+                });
+                if (!resp.ok) return null;
+
+                const dados = await resp.json();
+                const nomes = new Set();
+                (dados.elements || []).forEach(el => {
+                    const nome = el.tags && el.tags.name;
+                    if (nome && nome.trim().length > 1) nomes.add(nome.trim());
+                });
+                return Array.from(nomes).slice(0, MAX_NOMES_TRIANGULACAO);
+            } catch (e) {
+                console.warn('[EDV Prospector] Overpass falhou, seguindo sem triangulação:', e.message);
+                return null;
+            }
+        }
+
+        // Dispara uma busca na Tavily (via nosso proxy) para um nome exato de
+        // estabelecimento, em vez do par Segmento+Estado genérico.
+        async function buscarLeadsPorNomeExato(nome) {
+            const query = `"${nome}" Brasil`;
+            const fetchUrl = `${GOOGLE_PROXY_URL}?q=${encodeURIComponent(query)}`;
+            const response = await fetch(fetchUrl);
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+            return data;
+        }
+
         async function rodarRadar() {
             const nicho = document.getElementById('nichoInput').value;
-            const cidade = document.getElementById('estadoInput').value;
+            const estado = document.getElementById('estadoInput').value;
+            const cidade = document.getElementById('cidadeOpcionalInput').value.trim();
             const loadEl = document.getElementById('loadingRadar');
 
-            if (!nicho || !cidade) {
+            if (!nicho || !estado) {
                 loadEl.className = "text-red-600 mt-3 font-bold";
                 loadEl.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Selecione o Segmento e o Estado antes de iniciar o Radar.';
                 loadEl.style.display = "block";
@@ -236,43 +381,72 @@
                 return;
             }
 
-            // Status na tela
-            loadEl.className = "text-blue-600 mt-3 font-medium";
-            loadEl.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Buscando no Instagram, LinkedIn e Facebook...';
-            loadEl.style.display = "block";
-            
             document.getElementById('leadsContainer').classList.add('hidden');
             document.getElementById('painelAcao').classList.add('hidden');
-            
-            // O mecanismo de busca já está restrito a instagram.com, linkedin.com e
-            // facebook.com. Sem aspas: deixamos o algoritmo de relevância da Tavily
-            // considerar o estado como contexto, em vez de exigir a palavra exata no texto
-            // (isso ampliava demais o filtro e só trazia contas que citam o nome do estado).
-            const query = `${nicho} ${cidade} Brasil`;
-            const fetchUrl = `${GOOGLE_PROXY_URL}?q=${encodeURIComponent(query)}`;
+
+            let nomesTriangulados = null;
+            if (cidade) {
+                loadEl.className = "text-blue-600 mt-3 font-medium";
+                loadEl.innerHTML = '<i class="fa-solid fa-map-location-dot fa-spin mr-2"></i> Localizando estabelecimentos reais em ' + cidade + ' via OpenStreetMap...';
+                loadEl.style.display = "block";
+                nomesTriangulados = await buscarNomesViaOverpass(nicho, cidade, estado);
+            }
 
             try {
-                const response = await fetch(fetchUrl);
-                const data = await response.json();
-
-                // Sempre roda o diagnóstico, mesmo que dê certo ou falhe depois
-                diagnosticarResposta(query, data);
-
-                if (data.error) throw new Error(data.error);
-
-                const items = data.items || [];
                 currentLeads = [];
-                items.forEach(item => {
-                    const lead = extrairLeadDoItem(item, cidade);
-                    if (lead && !currentLeads.find(l => l.url === lead.url)) {
-                        currentLeads.push(lead);
+
+                if (nomesTriangulados && nomesTriangulados.length > 0) {
+                    // Caminho triangulado: 1 busca na Tavily por nome exato encontrado no mapa.
+                    for (let i = 0; i < nomesTriangulados.length; i++) {
+                        const nomeAlvo = nomesTriangulados[i];
+                        loadEl.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Triangulando "' + nomeAlvo + '" (' + (i + 1) + '/' + nomesTriangulados.length + ')...';
+
+                        const data = await buscarLeadsPorNomeExato(nomeAlvo);
+                        diagnosticarResposta('"' + nomeAlvo + '" Brasil', data);
+                        const items = data.items || [];
+                        items.forEach(item => {
+                            const lead = extrairLeadDoItem(item, estado);
+                            if (lead && !currentLeads.find(l => l.url === lead.url)) {
+                                currentLeads.push(lead);
+                            }
+                        });
                     }
-                });
+                } else {
+                    // Caminho padrão: 1 busca genérica Segmento + Estado (1 crédito Tavily).
+                    if (cidade && !nomesTriangulados) {
+                        console.info('[EDV Prospector] Triangulação via mapa não disponível para "' + nicho + '" ou cidade não encontrada — usando busca padrão.');
+                    }
+
+                    loadEl.className = "text-blue-600 mt-3 font-medium";
+                    loadEl.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Buscando no Instagram, LinkedIn e Facebook...';
+                    loadEl.style.display = "block";
+
+                    // O mecanismo de busca já está restrito a instagram.com, linkedin.com e
+                    // facebook.com. Sem aspas: deixamos o algoritmo de relevância da Tavily
+                    // considerar o estado como contexto, em vez de exigir a palavra exata no texto.
+                    const query = `${nicho} ${estado} Brasil`;
+                    const fetchUrl = `${GOOGLE_PROXY_URL}?q=${encodeURIComponent(query)}`;
+                    const response = await fetch(fetchUrl);
+                    const data = await response.json();
+
+                    diagnosticarResposta(query, data);
+                    if (data.error) throw new Error(data.error);
+
+                    const items = data.items || [];
+                    items.forEach(item => {
+                        const lead = extrairLeadDoItem(item, estado);
+                        if (lead && !currentLeads.find(l => l.url === lead.url)) {
+                            currentLeads.push(lead);
+                        }
+                    });
+                }
 
                 if (currentLeads.length > 0) {
                     renderLeads();
                     document.getElementById('leadsContainer').classList.remove('hidden');
                     loadEl.style.display = "none";
+                    rodarTriagemFiscal(); // roda em segundo plano, não bloqueia a exibição dos leads
+                    salvarEstado();
                 } else {
                     throw new Error("Busca finalizada, mas nenhuma conta comercial local encontrada.");
                 }
@@ -320,6 +494,132 @@
             lead.risco = avaliarRiscoMarca(lead);
             lead.localizacao = avaliarLocalizacao(lead, estadoSelecionado);
             return lead;
+        }
+
+        /**
+         * TRIAGEM FISCAL VIA CNPJ (BrasilAPI)
+         * ------------------------------------------------------------------
+         * Extrai o CNPJ do texto do resultado (quando presente), consulta a
+         * BrasilAPI (pública, gratuita, sem chave — https://brasilapi.com.br)
+         * e aplica uma matriz de filtros heurísticos para priorizar empresas
+         * com maior probabilidade de ainda não terem marca registrada:
+         *   - Capital social entre R$5.000 e R$1.000.000
+         *   - Não é MEI (natureza jurídica 213-5)
+         *   - Fundada há no máximo 3 anos (ideal: 180 a 730 dias)
+         *   - Alerta separado se nome fantasia = razão social (risco de colisão)
+         *
+         * IMPORTANTE: isso é uma heurística de priorização, não uma prova de
+         * nada. Uma empresa "descartada" pode perfeitamente ainda não ter
+         * marca registrada — e uma "aprovada" pode já ter. Sempre confirme
+         * com o botão "Checar INPI" antes de decidir.
+         *
+         * A BrasilAPI tem CORS habilitado, então chamamos direto do navegador
+         * (sem passar pelo proxy do Apps Script) — evita gastar cota da Tavily
+         * à toa e reduz uma camada de latência. Rodamos em série com um delay
+         * de 500ms entre chamadas, para respeitar o uso justo do serviço.
+         */
+
+        const REGEX_CNPJ = /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/;
+
+        function extrairCNPJDoTexto(texto) {
+            const match = String(texto || '').match(REGEX_CNPJ);
+            return match ? match[0] : null;
+        }
+
+        function avaliarTriagemFiscal(dados) {
+            const motivos = [];
+            let aprovado = true;
+
+            const capital = Number(dados.capital_social) || 0;
+            if (capital < 5000) { aprovado = false; motivos.push('Capital social abaixo de R$ 5.000 (indício de insolvência)'); }
+            if (capital > 1000000) { aprovado = false; motivos.push('Capital social acima de R$ 1.000.000 (provável já ter registro/jurídico próprio)'); }
+
+            const codigoNatureza = String(dados.codigo_natureza_juridica || '');
+            if (codigoNatureza.indexOf('213') === 0) { aprovado = false; motivos.push('MEI (natureza jurídica 213-5) — normalmente não prioriza registro de marca'); }
+
+            let diasFundacao = null;
+            if (dados.data_inicio_atividade) {
+                const dataFundacao = new Date(dados.data_inicio_atividade);
+                if (!isNaN(dataFundacao.getTime())) {
+                    diasFundacao = Math.floor((Date.now() - dataFundacao.getTime()) / 86400000);
+                    if (diasFundacao > 1095) { aprovado = false; motivos.push('Fundada há mais de 3 anos (~' + Math.floor(diasFundacao / 365) + ' anos) — maior chance de já ter marca registrada'); }
+                }
+            }
+
+            const nomeFantasia = (dados.nome_fantasia || '').trim().toLowerCase();
+            const razaoSocial = (dados.razao_social || '').trim().toLowerCase();
+            const colisaoNome = !nomeFantasia || nomeFantasia === razaoSocial;
+
+            return {
+                aprovado: aprovado,
+                motivos: motivos,
+                diasFundacao: diasFundacao,
+                faixaIdeal: diasFundacao !== null && diasFundacao >= 180 && diasFundacao <= 730,
+                colisaoNome: colisaoNome
+            };
+        }
+
+        // Encontra o sócio/administrador principal no QSA (Quadro de Sócios e
+        // Administradores) devolvido pela BrasilAPI. Prioriza quem tem
+        // "administrador" na qualificação (quem decide no dia a dia);
+        // se não achar, pega o primeiro "sócio" que aparecer.
+        function extrairNomeDoSocio(dados) {
+            const qsa = Array.isArray(dados.qsa) ? dados.qsa : [];
+            if (qsa.length === 0) return null;
+
+            const administrador = qsa.find(s => /s[óo]cio.*administrador/i.test(s.qualificacao_socio || ''));
+            if (administrador && administrador.nome_socio) return administrador.nome_socio.trim();
+
+            const socio = qsa.find(s => /s[óo]cio/i.test(s.qualificacao_socio || ''));
+            if (socio && socio.nome_socio) return socio.nome_socio.trim();
+
+            return null;
+        }
+
+        async function consultarCNPJParaLead(lead) {
+            const cnpjDigitos = lead.cnpj.replace(/\D/g, '');
+            try {
+                const resp = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + cnpjDigitos);
+                if (!resp.ok) {
+                    lead.triagemFiscal = { status: 'erro_consulta', detalhe: 'HTTP ' + resp.status };
+                    return;
+                }
+                const dados = await resp.json();
+                const avaliacao = avaliarTriagemFiscal(dados);
+                lead.dadosCNPJ = dados;
+                lead.nomeDoSocio = extrairNomeDoSocio(dados);
+                lead.triagemFiscal = Object.assign({ status: avaliacao.aprovado ? 'aprovado' : 'descartado' }, avaliacao);
+            } catch (e) {
+                lead.triagemFiscal = { status: 'erro_consulta', detalhe: e.message };
+            }
+        }
+
+        // Roda a triagem fiscal em série (com delay) para todos os leads da busca atual.
+        // Não quebra o fluxo se algum CNPJ faltar ou a consulta falhar — só marca o status.
+        async function rodarTriagemFiscal() {
+            const statusEl = document.getElementById('statusTriagemFiscal');
+            for (let i = 0; i < currentLeads.length; i++) {
+                const lead = currentLeads[i];
+                const cnpjEncontrado = extrairCNPJDoTexto((lead.snippet || '') + ' ' + (lead.name || ''));
+
+                if (!cnpjEncontrado) {
+                    lead.triagemFiscal = { status: 'sem_cnpj' };
+                    continue;
+                }
+
+                lead.cnpj = cnpjEncontrado;
+                if (statusEl) statusEl.innerText = 'Triagem fiscal: consultando CNPJ ' + (i + 1) + '/' + currentLeads.length + ' na Receita Federal (BrasilAPI)...';
+                await consultarCNPJParaLead(lead);
+                renderLeads(); // atualiza incrementalmente, não precisa esperar tudo terminar
+                if (selectedLead === lead) renderAuditoriaSocio(lead);
+                await new Promise(function (resolve) { setTimeout(resolve, 500); });
+            }
+            if (statusEl) statusEl.innerText = '';
+            salvarEstado();
+        }
+
+        function formatarMoedaBRL(valor) {
+            return Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
         }
 
         const ESTADOS_UF = {
@@ -459,12 +759,24 @@
             'alto': { texto: 'Risco alto', classe: 'bg-red-100 text-red-700' }
         };
 
+        const TRIAGEM_FISCAL_ESTILO = {
+            'aprovado': { texto: 'CNPJ ok', classe: 'bg-green-100 text-green-700', icone: 'fa-solid fa-circle-check' },
+            'descartado': { texto: 'Descartado (fiscal)', classe: 'bg-slate-200 text-slate-600', icone: 'fa-solid fa-ban' },
+            'sem_cnpj': { texto: 'CNPJ não encontrado', classe: 'bg-gray-100 text-gray-500', icone: 'fa-solid fa-question' },
+            'erro_consulta': { texto: 'Falha na consulta', classe: 'bg-amber-100 text-amber-700', icone: 'fa-solid fa-triangle-exclamation' }
+        };
+
         function renderLeads() {
             const lista = document.getElementById('listaLeads');
             const ocultarAlto = document.getElementById('filtroRiscoAlto').checked;
+            const ocultarDescartadoFiscal = document.getElementById('filtroDescartadoFiscal').checked;
             lista.innerHTML = '';
 
-            const visiveis = currentLeads.filter(l => !(ocultarAlto && l.risco && l.risco.nivel === 'alto'));
+            const visiveis = currentLeads.filter(l => {
+                if (ocultarAlto && l.risco && l.risco.nivel === 'alto') return false;
+                if (ocultarDescartadoFiscal && l.triagemFiscal && l.triagemFiscal.status === 'descartado') return false;
+                return true;
+            });
             document.getElementById('contadorLeads').innerText = visiveis.length + (visiveis.length !== currentLeads.length ? ' de ' + currentLeads.length : '');
 
             visiveis.forEach((lead) => {
@@ -480,11 +792,45 @@
                     seloLocalizacao = `<span class="inline-block mt-1 ml-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-700" title="Texto menciona: ${lead.localizacao.estadosEncontrados.join(', ')}"><i class="fa-solid fa-location-dot mr-1"></i>Confira o estado</span>`;
                 }
 
+                let seloFiscal = '';
+                if (lead.triagemFiscal) {
+                    const tf = lead.triagemFiscal;
+                    const estiloTf = TRIAGEM_FISCAL_ESTILO[tf.status];
+                    let tituloTf = tf.status === 'descartado' && tf.motivos ? tf.motivos.join('; ')
+                        : tf.status === 'erro_consulta' ? tf.detalhe
+                        : tf.status === 'sem_cnpj' ? 'Nenhum CNPJ encontrado no texto — pode informar manualmente ao selecionar o lead'
+                        : 'Passou pela triagem fiscal';
+                    seloFiscal = `<span class="inline-block mt-1 ml-1 px-2 py-0.5 rounded text-[11px] font-semibold ${estiloTf.classe}" title="${tituloTf}"><i class="${estiloTf.icone} mr-1"></i>${estiloTf.texto}</span>`;
+                    if (tf.colisaoNome) {
+                        seloFiscal += `<span class="inline-block mt-1 ml-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-100 text-orange-700" title="Nome fantasia igual ou ausente em relação à razão social"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Risco de colisão</span>`;
+                    }
+                }
+
                 li.innerHTML = `
                     <p class="font-bold truncate" title="${lead.name}"><i class="${iconClass} mr-1"></i> ${lead.name}</p>
                     <p class="text-xs text-gray-500">@${lead.handle} · ${lead.platform}</p>
-                    <span class="inline-block mt-1 px-2 py-0.5 rounded text-[11px] font-semibold ${estiloRisco.classe}" title="${tituloRisco}">${estiloRisco.texto}</span>${seloLocalizacao}
+                    <span class="inline-block mt-1 px-2 py-0.5 rounded text-[11px] font-semibold ${estiloRisco.classe}" title="${tituloRisco}">${estiloRisco.texto}</span>${seloLocalizacao}${seloFiscal}
                 `;
+
+                // Select de etapa do funil de vendas. Criado via DOM (não via string
+                // interpolada) para evitar quebrar o HTML com caracteres especiais
+                // que possam aparecer no nome/URL do lead.
+                const selectEtapa = document.createElement('select');
+                selectEtapa.className = 'mt-2 w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white';
+                ETAPAS_VENDA.forEach(etapa => {
+                    const opt = document.createElement('option');
+                    opt.value = etapa;
+                    opt.textContent = etapa;
+                    if ((lead.etapaVenda || ETAPAS_VENDA[0]) === etapa) opt.selected = true;
+                    selectEtapa.appendChild(opt);
+                });
+                selectEtapa.onclick = (ev) => ev.stopPropagation(); // não deixa o clique no select selecionar o lead
+                selectEtapa.onchange = (ev) => {
+                    lead.etapaVenda = ev.target.value;
+                    salvarEstado();
+                };
+                li.appendChild(selectEtapa);
+
                 li.onclick = () => {
                     selectedLead = lead;
                     document.getElementById('painelAcao').classList.remove('hidden');
@@ -493,9 +839,93 @@
                     document.getElementById('leadNome').innerText = lead.name;
                     document.getElementById('leadInsta').innerText = '@' + lead.handle + ' (' + lead.platform + ')';
                     document.getElementById('leadInsta').href = lead.url;
+                    renderTriagemFiscalPainel(lead);
+                    renderAuditoriaSocio(lead);
+                    if (lead.copyGerada) {
+                        document.getElementById('argumentoVenda').innerText = lead.copyGerada.argumento_venda;
+                        document.getElementById('copyInstagram').value = lead.copyGerada.copy_instagram;
+                        document.getElementById('copyResult').classList.remove('hidden');
+                        document.getElementById('copyResult').classList.add('flex');
+                    }
                 };
                 lista.appendChild(li);
             });
+        }
+
+        // Mostra o detalhe da triagem fiscal (ou o campo de CNPJ manual) no painel de ação.
+        function renderTriagemFiscalPainel(lead) {
+            const container = document.getElementById('triagemFiscalContainer');
+            const tf = lead.triagemFiscal || { status: 'sem_cnpj' };
+
+            if (tf.status === 'sem_cnpj' || tf.status === 'erro_consulta') {
+                container.innerHTML = `
+                    <div class="text-sm bg-slate-50 border border-slate-200 rounded-lg p-3">
+                        <p class="text-slate-600 mb-2">${tf.status === 'erro_consulta' ? 'Falha ao consultar o CNPJ (' + tf.detalhe + ').' : 'Nenhum CNPJ encontrado automaticamente no texto do resultado.'} Informe manualmente se souber:</p>
+                        <div class="flex gap-2">
+                            <input type="text" id="cnpjManualInput" placeholder="00.000.000/0000-00" class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" value="${lead.cnpj || ''}">
+                            <button onclick="consultarCNPJManual()" class="bg-slate-700 text-white text-sm px-3 py-1 rounded">Consultar</button>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            const d = lead.dadosCNPJ || {};
+            const idadeAnos = tf.diasFundacao !== null && tf.diasFundacao !== undefined ? (tf.diasFundacao / 365).toFixed(1) : '?';
+            const corStatus = tf.status === 'aprovado' ? 'text-green-700' : 'text-slate-500';
+
+            container.innerHTML = `
+                <div class="text-sm bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <p class="font-semibold ${corStatus} mb-1">${tf.status === 'aprovado' ? '✅ Aprovado na triagem fiscal' : '🚫 Descartado na triagem fiscal'}</p>
+                    <p class="text-xs text-slate-500 mb-2">${d.razao_social || ''} · CNAE: ${d.cnae_fiscal_descricao || '—'}</p>
+                    <p class="text-xs text-slate-600">Capital social: ${formatarMoedaBRL(d.capital_social)} · Idade: ~${idadeAnos} anos${tf.faixaIdeal ? ' (faixa ideal 6m–2a)' : ''}</p>
+                    ${tf.colisaoNome ? '<p class="text-xs text-orange-600 mt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Alto risco de colisão: nome fantasia ausente/igual à razão social</p>' : ''}
+                    ${tf.motivos && tf.motivos.length ? '<p class="text-xs text-slate-500 mt-1">Motivos: ' + tf.motivos.join('; ') + '</p>' : ''}
+                </div>
+            `;
+        }
+
+        async function consultarCNPJManual() {
+            if (!selectedLead) return;
+            const input = document.getElementById('cnpjManualInput');
+            const valor = input.value.trim();
+            if (!REGEX_CNPJ.test(valor) && valor.replace(/\D/g, '').length !== 14) {
+                alert('CNPJ inválido. Use o formato 00.000.000/0000-00 (ou só os 14 números).');
+                return;
+            }
+            selectedLead.cnpj = valor;
+            input.disabled = true;
+            await consultarCNPJParaLead(selectedLead);
+            renderTriagemFiscalPainel(selectedLead);
+            renderAuditoriaSocio(selectedLead);
+            renderLeads();
+            salvarEstado();
+        }
+
+        // Módulo de "Dorking" (OSINT leve): monta uma busca avançada no Google
+        // restrita a perfis do LinkedIn, cruzando o nome do sócio com a razão
+        // social — só aparece quando temos um nome de sócio confirmado pela
+        // Receita Federal (dado público). Ajuda o assessor a achar rápido o
+        // perfil profissional de quem decide, sem inventar nenhum dado novo.
+        function renderAuditoriaSocio(lead) {
+            const container = document.getElementById('auditoriaSocioContainer');
+            if (!lead.nomeDoSocio) {
+                container.innerHTML = '';
+                return;
+            }
+            container.innerHTML = `
+                <button onclick="abrirAuditoriaSocio()" class="bg-indigo-700 text-white px-4 py-2 rounded font-medium w-64">
+                    <i class="fa-solid fa-magnifying-glass mr-1"></i> Auditoria de Sócio (${lead.nomeDoSocio.split(' ')[0]})
+                </button>
+            `;
+        }
+
+        function abrirAuditoriaSocio() {
+            if (!selectedLead || !selectedLead.nomeDoSocio) return;
+            const razaoSocial = (selectedLead.dadosCNPJ && selectedLead.dadosCNPJ.razao_social) || selectedLead.name;
+            const dork = `site:linkedin.com/in/ "${selectedLead.nomeDoSocio}" "${razaoSocial}"`;
+            const url = 'https://www.google.com/search?q=' + encodeURIComponent(dork);
+            window.open(url, '_blank');
         }
 
         /**
@@ -564,9 +994,23 @@
             loadEl.classList.remove('hidden');
             document.getElementById('copyResult').classList.add('hidden');
             
+            const dadosFiscais = selectedLead.dadosCNPJ;
+            let contextoFiscal = '';
+            if (dadosFiscais && selectedLead.triagemFiscal && selectedLead.triagemFiscal.diasFundacao !== null) {
+                const idadeMeses = Math.round(selectedLead.triagemFiscal.diasFundacao / 30);
+                contextoFiscal = `
+                Dados fiscais confirmados (Receita Federal): a empresa se chama "${dadosFiscais.razao_social}", atua no setor de "${dadosFiscais.cnae_fiscal_descricao}", foi fundada há ${idadeMeses} meses, com capital social de ${formatarMoedaBRL(dadosFiscais.capital_social)}. Use a urgência do tempo de mercado e a natureza do setor para justificar o risco de operar sem o registro de marca no INPI.`;
+            }
+
+            let contextoSocio = '';
+            if (selectedLead.nomeDoSocio) {
+                contextoSocio = `
+                O sócio/administrador registrado na Receita Federal é ${selectedLead.nomeDoSocio}. Escreva a copy se dirigindo NOMINALMENTE a essa pessoa (ex: "Olá, ${selectedLead.nomeDoSocio.split(' ')[0]}"), eliminando qualquer saudação corporativa genérica como "Prezados" ou "À empresa".`;
+            }
+
             const prompt = `
                 Somos EDV Jr, vendemos Registro de Marca.
-                Lead Encontrado: ${selectedLead.name} (@${selectedLead.handle} no ${selectedLead.platform}). Nicho do mercado: ${document.getElementById('nichoInput').value}.
+                Lead Encontrado: ${selectedLead.name} (@${selectedLead.handle} no ${selectedLead.platform}). Nicho do mercado: ${document.getElementById('nichoInput').value}.${contextoFiscal}${contextoSocio}
                 Retorne ESTRITAMENTE UM JSON com:
                 {"argumento_venda": "Parágrafo dizendo o risco deste nicho não registrar marca.", "copy_instagram": "Mensagem curta para tentar marcar reunião, adaptada ao canal (${selectedLead.platform})."}
             `;
@@ -589,6 +1033,8 @@
                 
                 document.getElementById('argumentoVenda').innerText = aiResponse.argumento_venda;
                 document.getElementById('copyInstagram').value = aiResponse.copy_instagram;
+                selectedLead.copyGerada = aiResponse; // guarda no lead para persistir no localStorage
+                salvarEstado();
                 document.getElementById('copyResult').classList.remove('hidden');
                 document.getElementById('copyResult').classList.add('flex');
             } catch(e) {
@@ -597,6 +1043,14 @@
             if(!loadEl.innerHTML.includes('Erro')) {
                 loadEl.classList.add('hidden');
             }
+        }
+
+        // O script está no final do <body>, então o DOM já existe — mas
+        // usamos DOMContentLoaded mesmo assim por robustez (caso o script
+        // seja movido para o <head> no futuro).
+        document.addEventListener('DOMContentLoaded', carregarEstado);
+        if (document.readyState === 'interactive' || document.readyState === 'complete') {
+            carregarEstado();
         }
     </script>
 </body>
