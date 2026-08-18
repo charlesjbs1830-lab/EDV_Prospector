@@ -361,6 +361,83 @@ out 20;`;
             return data;
         }
 
+        // ------------------------------------------------------------------
+        // GERADOR COMBINATÓRIO DE PADRÕES DE NICHO
+        // ------------------------------------------------------------------
+        // Usado no "caminho padrão" (sem cidade informada, ou sem mapeamento
+        // no Overpass) para substituir a busca única "Nicho Estado Brasil"
+        // por até 3 buscas de nomes de marca abstratos/sofisticados que um
+        // negócio real desse ramo provavelmente usaria — sem estourar cota.
+        //
+        // Os oito grupos abaixo reaproveitam exatamente os <optgroup> do
+        // <select id="nichoInput"> (em vez de mapear cada um dos ~39 nichos
+        // individualmente, o que geraria uma matriz enorme e repetitiva
+        // para manter). Cada categoria tem seu próprio vocabulário de
+        // prefixos/sufixos — nada de misturar "Maison" com autopeças.
+        const CATEGORIA_DO_NICHO = {
+            'Clínica de Estética': 'saude_estetica', 'Academia': 'saude_estetica', 'Personal Trainer': 'saude_estetica',
+            'Nutricionista': 'saude_estetica', 'Clínica Odontológica': 'saude_estetica', 'Clínica Médica': 'saude_estetica',
+            'Clínica de Fisioterapia': 'saude_estetica', 'Clínica de Psicologia': 'saude_estetica',
+            'Farmácia de Manipulação': 'saude_estetica', 'Ótica': 'saude_estetica',
+
+            'Salão de Beleza': 'moda_beleza', 'Barbearia': 'moda_beleza', 'Loja de Roupas': 'moda_beleza',
+            'Loja de Calçados': 'moda_beleza', 'Semijoias': 'moda_beleza',
+
+            'Restaurante': 'alimentacao', 'Hamburgueria': 'alimentacao', 'Pizzaria': 'alimentacao',
+            'Confeitaria': 'alimentacao', 'Cafeteria': 'alimentacao',
+
+            'Escritório de Advocacia': 'servicos_profissionais', 'Escritório de Contabilidade': 'servicos_profissionais',
+            'Consultoria Empresarial': 'servicos_profissionais', 'Escritório de Arquitetura': 'servicos_profissionais',
+            'Agência de Marketing Digital': 'servicos_profissionais',
+
+            'Imobiliária': 'comercio_imoveis', 'Construtora': 'comercio_imoveis', 'Loja de Eletrônicos': 'comercio_imoveis',
+            'Papelaria': 'comercio_imoveis', 'Floricultura': 'comercio_imoveis', 'Loja Virtual': 'comercio_imoveis',
+
+            'Pet Shop': 'pet', 'Clínica Veterinária': 'pet',
+
+            'Escola de Idiomas': 'educacao_tech', 'Curso Livre': 'educacao_tech', 'Startup de Tecnologia': 'educacao_tech',
+
+            'Pousada': 'turismo_eventos_auto', 'Buffet de Festas': 'turismo_eventos_auto',
+            'Oficina Mecânica': 'turismo_eventos_auto', 'Concessionária': 'turismo_eventos_auto'
+        };
+
+        const MATRIZ_PADROES = {
+            saude_estetica: { prefixos: ['Studio', 'Instituto', 'Espaço', 'Clínica', 'Dra'], sufixos: ['Beauty', 'Advanced', 'Prime', 'Glow', 'Wellness'] },
+            moda_beleza: { prefixos: ['Studio', 'Atelier', 'Espaço', 'Casa'], sufixos: ['Beauty', 'Style', 'Look', 'Concept'] },
+            alimentacao: { prefixos: ['Sabor', 'Casa', 'Ponto', 'Empório'], sufixos: ['Gourmet', 'Artesanal', 'House', 'Prime'] },
+            servicos_profissionais: { prefixos: ['Escritório', 'Grupo', 'Studio'], sufixos: ['Associados', 'Partners', 'Consultoria', 'Legal'] },
+            comercio_imoveis: { prefixos: ['Casa', 'Espaço', 'Grupo'], sufixos: ['Prime', 'Premium', 'Select'] },
+            pet: { prefixos: ['Casa', 'Espaço', 'Clínica'], sufixos: ['Pet', 'Animal', 'Vida'] },
+            educacao_tech: { prefixos: ['Instituto', 'Escola', 'Academy'], sufixos: ['Tech', 'Digital', 'Plus'] },
+            turismo_eventos_auto: { prefixos: ['Casa', 'Espaço', 'Studio'], sufixos: ['Eventos', 'Premium', 'Prime'] }
+        };
+
+        // Gera de 3 a 5 combinações prefixo+sufixo únicas e embaralhadas para
+        // o nicho selecionado. Nichos sem categoria mapeada caem de volta no
+        // próprio nome do nicho (não quebra o fluxo, só não sofistica).
+        function gerarTermosCombinados(nicho) {
+            const categoria = CATEGORIA_DO_NICHO[nicho];
+            const padroes = MATRIZ_PADROES[categoria];
+            if (!padroes) return [nicho];
+
+            const combinacoes = [];
+            padroes.prefixos.forEach(prefixo => {
+                padroes.sufixos.forEach(sufixo => {
+                    combinacoes.push(prefixo + ' ' + sufixo);
+                });
+            });
+
+            for (let i = combinacoes.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const tmp = combinacoes[i];
+                combinacoes[i] = combinacoes[j];
+                combinacoes[j] = tmp;
+            }
+
+            const quantidade = 3 + Math.floor(Math.random() * 3); // 3 a 5
+            return combinacoes.slice(0, quantidade);
+        }
+
         async function rodarRadar() {
             const nicho = document.getElementById('nichoInput').value;
             const estado = document.getElementById('estadoInput').value;
@@ -412,33 +489,48 @@ out 20;`;
                         });
                     }
                 } else {
-                    // Caminho padrão: 1 busca genérica Segmento + Estado (1 crédito Tavily).
+                    // Caminho padrão: até 3 buscas com nomes de marca sofisticados
+                    // gerados pela matriz de padrões do nicho, em vez de 1 busca
+                    // genérica "Nicho Estado Brasil" — mais chance de achar marcas
+                    // com nome abstrato/de fantasia, sem estourar cota (máx. 3
+                    // créditos Tavily por clique, como pedido).
                     if (cidade && !nomesTriangulados) {
-                        console.info('[EDV Prospector] Triangulação via mapa não disponível para "' + nicho + '" ou cidade não encontrada — usando busca padrão.');
+                        console.info('[EDV Prospector] Triangulação via mapa não disponível para "' + nicho + '" ou cidade não encontrada — usando geração de padrões de nome.');
                     }
 
-                    loadEl.className = "text-blue-600 mt-3 font-medium";
-                    loadEl.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Buscando no Instagram, LinkedIn e Facebook...';
-                    loadEl.style.display = "block";
+                    const termos = gerarTermosCombinados(nicho).slice(0, 3);
 
-                    // O mecanismo de busca já está restrito a instagram.com, linkedin.com e
-                    // facebook.com. Sem aspas: deixamos o algoritmo de relevância da Tavily
-                    // considerar o estado como contexto, em vez de exigir a palavra exata no texto.
-                    const query = `${nicho} ${estado} Brasil`;
-                    const fetchUrl = `${GOOGLE_PROXY_URL}?q=${encodeURIComponent(query)}`;
-                    const response = await fetch(fetchUrl);
-                    const data = await response.json();
+                    for (let i = 0; i < termos.length; i++) {
+                        const termo = termos[i];
 
-                    diagnosticarResposta(query, data);
-                    if (data.error) throw new Error(data.error);
+                        loadEl.className = "text-blue-600 mt-3 font-medium";
+                        loadEl.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Buscando "' + termo + '" em ' + estado + ' (' + (i + 1) + '/' + termos.length + ')...';
+                        loadEl.style.display = "block";
 
-                    const items = data.items || [];
-                    items.forEach(item => {
-                        const lead = extrairLeadDoItem(item, estado);
-                        if (lead && !currentLeads.find(l => l.url === lead.url)) {
-                            currentLeads.push(lead);
-                        }
-                    });
+                        // Segue o mesmo estilo de query já validado em
+                        // buscarLeadsPorNomeExato: termo entre aspas (força
+                        // correspondência próxima ao nome inventado) e estado sem
+                        // aspas (deixa a relevância semântica da Tavily usar como
+                        // contexto). Sem "site:instagram.com" no texto — isso é
+                        // sintaxe de operador do Google/DuckDuckGo, não da Tavily;
+                        // a restrição de domínio já é feita à parte, via
+                        // include_domains no EDV_Scraper.gs.
+                        const query = `"${termo}" ${estado} Brasil`;
+                        const fetchUrl = `${GOOGLE_PROXY_URL}?q=${encodeURIComponent(query)}`;
+                        const response = await fetch(fetchUrl);
+                        const data = await response.json();
+
+                        diagnosticarResposta(query, data);
+                        if (data.error) throw new Error(data.error);
+
+                        const items = data.items || [];
+                        items.forEach(item => {
+                            const lead = extrairLeadDoItem(item, estado);
+                            if (lead && !currentLeads.find(l => l.url === lead.url)) {
+                                currentLeads.push(lead);
+                            }
+                        });
+                    }
                 }
 
                 if (currentLeads.length > 0) {
