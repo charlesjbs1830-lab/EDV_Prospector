@@ -35,7 +35,8 @@
             <h1 class="text-xl font-bold tracking-tight"><i class="fa-solid fa-registered mr-2 text-blue-500"></i> EDV Marcas</h1>
         </div>
         <nav class="flex-1 py-6 space-y-1">
-            <a href="#" class="block px-6 py-3 tab-active"><i class="fa-solid fa-satellite-dish w-6 text-center"></i> Radar (Scraper)</a>
+            <a href="#" id="navRadar" onclick="mostrarAba('radar'); return false;" class="block px-6 py-3 tab-active"><i class="fa-solid fa-satellite-dish w-6 text-center"></i> Radar (Scraper)</a>
+            <a href="#" id="navCRM" onclick="mostrarAba('crm'); return false;" class="block px-6 py-3 text-slate-300 hover:bg-slate-800"><i class="fa-solid fa-table-list w-6 text-center"></i> Pipeline (CRM)</a>
         </nav>
     </aside>
 
@@ -48,7 +49,7 @@
             <div id="erroGlobal" class="hidden absolute top-4 right-4 bg-red-100 text-red-700 p-4 rounded border border-red-400 font-bold shadow"></div>
         </header>
 
-        <div class="flex-1 overflow-y-auto px-8 py-6">
+        <div id="viewRadar" class="flex-1 overflow-y-auto px-8 py-6">
             <!-- Radar Input -->
             <div class="glass-card rounded-xl p-6 mb-6 border-t-4 border-blue-500">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -116,7 +117,7 @@
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-slate-600 mb-1">Estado</label>
-                        <select id="estadoInput" class="w-full border border-slate-300 rounded-lg px-4 py-3 text-base bg-white">
+                        <select id="estadoInput" onchange="popularCidadesIBGE()" class="w-full border border-slate-300 rounded-lg px-4 py-3 text-base bg-white">
                             <option value="" selected disabled>Selecione o estado...</option>
                             <option value="Acre">Acre</option>
                             <option value="Alagoas">Alagoas</option>
@@ -150,8 +151,10 @@
                 </div>
                 <div class="mt-4">
                     <label class="block text-sm font-semibold text-slate-600 mb-1">Cidade (opcional)</label>
-                    <input type="text" id="cidadeOpcionalInput" placeholder="Ex: Vitória — ativa a triangulação via mapa (OpenStreetMap)" class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm">
-                    <p class="text-xs text-slate-400 mt-1">Se preenchida e o segmento tiver mapeamento no mapa, o Radar primeiro localiza nomes reais de estabelecimentos na cidade e só depois busca cada um no Instagram/LinkedIn/Facebook — mais preciso, mas consome mais cota da Tavily (até 8 buscas extra por vez, em vez de 1). Deixe em branco para o comportamento padrão.</p>
+                    <select id="cidadeOpcionalInput" class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm bg-white">
+                        <option value="">Selecione um estado primeiro...</option>
+                    </select>
+                    <p class="text-xs text-slate-400 mt-1">Lista de cidades reais via IBGE, capital do estado primeiro. Se escolhida e o segmento tiver mapeamento no mapa, o Radar primeiro localiza nomes reais de estabelecimentos na cidade e só depois busca cada um no Instagram/LinkedIn/Facebook — mais preciso, mas consome mais cota da Tavily (até 8 buscas extra por vez, em vez de 1). Deixe em branco para o comportamento padrão.</p>
                 </div>
                 <button onclick="rodarRadar()" id="btnRodarRadar" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow transition">
                     <i class="fa-solid fa-play mr-2"></i> INICIAR RADAR
@@ -181,7 +184,11 @@
                     <!-- Coluna Esquerda -->
                     <div class="xl:col-span-1 glass-card rounded-xl h-[500px] flex flex-col">
                         <div class="bg-slate-100 p-3 border-b text-sm font-semibold flex justify-between items-center">
-                            <span>Empresas Encontradas</span><span id="contadorLeads">0</span>
+                            <span>Empresas Encontradas</span>
+                            <div class="flex items-center gap-3">
+                                <span id="contadorLeads">0</span>
+                                <button id="btnSincronizar" onclick="sincronizarN8N()" class="text-xs bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded shadow transition"><i class="fa-solid fa-cloud-arrow-up mr-1"></i> Sincronizar CRM</button>
+                            </div>
                         </div>
                         <label class="flex items-center gap-2 px-3 py-2 text-xs text-slate-600 border-b bg-slate-50 cursor-pointer">
                             <input type="checkbox" id="filtroRiscoAlto" checked onchange="renderLeads()">
@@ -206,6 +213,11 @@
                         </button>
                         <div id="resultadoEndereco" class="hidden mb-4 text-sm bg-emerald-50 border border-emerald-200 rounded-lg p-3"></div>
                         <button onclick="gerarCopy()" class="bg-blue-600 text-white px-4 py-2 rounded font-medium w-48">2. Gerar Mensagem (IA)</button>
+
+                        <label class="flex items-center gap-2 px-3 py-2 mt-3 text-xs text-slate-600 border bg-slate-50 rounded cursor-pointer w-max">
+                            <input type="checkbox" id="toggleB2B" checked>
+                            Abordagem corporativa rigorosa (B2B)
+                        </label>
                         
                         <p id="loadingGroq" class="text-blue-600 text-sm hidden mt-3"><i class="fa-solid fa-circle-notch fa-spin mr-1"></i> A IA está pensando...</p>
                         
@@ -217,20 +229,100 @@
                 </div>
             </div>
         </div>
+
+        <!-- Aba Pipeline / CRM -->
+        <div id="viewCRM" class="hidden flex-1 overflow-y-auto px-8 py-6">
+            <div class="glass-card rounded-xl overflow-hidden">
+                <div class="bg-slate-100 p-4 border-b flex items-center justify-between">
+                    <span class="font-semibold text-slate-700">Pipeline de Leads (todas as buscas salvas nesta sessão)</span>
+                    <span id="contadorPipeline" class="text-xs text-slate-500"></span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+                            <tr>
+                                <th class="px-4 py-3">Empresa</th>
+                                <th class="px-4 py-3">Segmento</th>
+                                <th class="px-4 py-3">Termo Gerador</th>
+                                <th class="px-4 py-3">Estágio</th>
+                            </tr>
+                        </thead>
+                        <tbody id="corpoTabelaPipeline"></tbody>
+                    </table>
+                </div>
+                <p id="pipelineVazio" class="hidden p-6 text-center text-slate-400 text-sm">Nenhum lead salvo ainda — rode uma busca na aba Radar primeiro.</p>
+            </div>
+
+            <div class="glass-card rounded-xl overflow-hidden mt-6">
+                <div class="bg-amber-50 p-4 border-b border-amber-200">
+                    <span class="font-semibold text-amber-800"><i class="fa-solid fa-clock-rotate-left mr-1"></i> Em quarentena (copy já enviada — não aparecem em novas buscas por 60 dias)</span>
+                    <p class="text-xs text-amber-700 mt-1">Passado esse prazo, eles NÃO voltam sozinhos pro radar — reabordagem automática pode parecer insistência. Reative manualmente aqui se quiser tentar de novo.</p>
+                </div>
+                <ul id="listaBlacklist" class="divide-y divide-slate-100"></ul>
+                <p id="blacklistVazia" class="hidden p-6 text-center text-slate-400 text-sm">Nenhum lead em quarentena.</p>
+            </div>
+        </div>
     </main>
 
     <!-- JS Principal -->
     <script>
-        const GROQ_API_KEY = "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";
-        
-        // Coloque aqui o link do seu novo servidor Google Apps Script
-        const GOOGLE_PROXY_URL = "https://script.google.com/macros/s/AKfycbxpuh_qP_ztGKRpM2p31fLOf7ukofiut_9fA2ZPVnwI6OGviPXgBBpuv7UMR_H7Chb6/exec";
+        // URL do backend serverless (Cloudflare Worker). As chaves da Tavily e da
+        // Groq ficam SÓ no worker (como segredos), nunca aqui no client.
+        // Troque pela URL real depois do `wrangler deploy` (veja edv-worker/README.md).
+        const WORKER_URL = "https://edv-prospector-backend.edvjr-prospector.workers.dev";
+        const N8N_WEBHOOK_URL = "https://edvjr.app.n8n.cloud/webhook/leads-ingest";
 
         let currentLeads = [];
         let selectedLead = null;
 
         const ETAPAS_VENDA = ['Frio', 'Sócio Contatado', 'Em Negociação', 'Fechado', 'Perdido'];
         const CHAVE_PIPELINE = 'edv_pipeline';
+
+        // ------------------------------------------------------------------
+        // BLACKLIST TEMPORAL (quarentena após copy gerada)
+        // ------------------------------------------------------------------
+        // O pedido original especificava decaimento exponencial W(t) = W0·e^(-λt)
+        // com um limiar de esquecimento. Implementei mais simples de propósito:
+        // não existe nenhum dado histórico real da EDV Jr. pra calibrar um λ —
+        // qualquer constante que eu escolhesse seria um chute vestido de
+        // fórmula. Um limiar de dias simples entrega o mesmo resultado prático
+        // (lead some da lista por um tempo, depois pode voltar) sem fingir uma
+        // precisão que não existe.
+        //
+        // Também mudei UM comportamento por decisão própria, não só por
+        // limitação técnica: o pedido original fazia o lead voltar a aparecer
+        // AUTOMATICAMENTE nas buscas depois que o "peso" decaísse. Isso
+        // significa reabordar automaticamente alguém que já foi contatado e
+        // não respondeu — pra uma consultoria jurídica, isso corre o risco de
+        // parecer spam/insistência, não prospecção. Por isso os leads
+        // "esfriados" aparecem numa lista separada pra REVISÃO MANUAL, não
+        // voltam sozinhos pro radar.
+        const CHAVE_BLACKLIST = 'edv_blacklist';
+        const DIAS_QUARENTENA = 60;
+
+        function obterBlacklist() {
+            try { return JSON.parse(localStorage.getItem(CHAVE_BLACKLIST) || '{}'); }
+            catch (e) { return {}; }
+        }
+
+        function adicionarNaBlacklist(lead) {
+            const bl = obterBlacklist();
+            bl[lead.url] = { nome: lead.name, handle: lead.handle, dataEnvio: new Date().toISOString(), nicho: document.getElementById('nichoInput').value };
+            try { localStorage.setItem(CHAVE_BLACKLIST, JSON.stringify(bl)); } catch (e) { /* ignora */ }
+        }
+
+        function leadEstaNaBlacklist(url) {
+            const entrada = obterBlacklist()[url];
+            if (!entrada) return false;
+            const dias = (new Date() - new Date(entrada.dataEnvio)) / (1000 * 60 * 60 * 24);
+            return dias < DIAS_QUARENTENA; // depois desse prazo, para de filtrar automaticamente — mas exige revisão manual na aba CRM pra voltar a ser buscado, não reaparece sozinho
+        }
+
+        function removerDaBlacklist(url) {
+            const bl = obterBlacklist();
+            delete bl[url];
+            try { localStorage.setItem(CHAVE_BLACKLIST, JSON.stringify(bl)); } catch (e) { /* ignora */ }
+        }
 
         // ------------------------------------------------------------------
         // MÓDULO DE PERSISTÊNCIA (localStorage)
@@ -354,11 +446,62 @@ out 20;`;
         // estabelecimento, em vez do par Segmento+Estado genérico.
         async function buscarLeadsPorNomeExato(nome) {
             const query = `"${nome}" Brasil`;
-            const fetchUrl = `${GOOGLE_PROXY_URL}?q=${encodeURIComponent(query)}`;
+            const fetchUrl = `${WORKER_URL}/api/search?q=${encodeURIComponent(query)}`;
             const response = await fetch(fetchUrl);
             const data = await response.json();
             if (data.error) throw new Error(data.error);
             return data;
+        }
+
+        // ------------------------------------------------------------------
+        // CIDADES POR ESTADO (API pública do IBGE)
+        // ------------------------------------------------------------------
+        // O endpoint de localidades do IBGE devolve todos os municípios reais
+        // de um estado — isso é real e funciona. O que NÃO existe num único
+        // endpoint simples e gratuito é a POPULAÇÃO de cada um (isso vive na
+        // API de Agregados/SIDRA do IBGE, que exige encadear indicador +
+        // período + localidade — muito mais frágil pra manter aqui). Por
+        // isso a ordenação usa uma aproximação honesta: a capital do estado
+        // primeiro (que praticamente sempre é a maior cidade), depois o
+        // resto em ordem alfabética. Não é "por população" de verdade — é
+        // uma aproximação razoável sem inventar dados de população que eu
+        // não tenho como verificar.
+        const CAPITAL_DO_ESTADO = {
+            'Acre': 'Rio Branco', 'Alagoas': 'Maceió', 'Amapá': 'Macapá', 'Amazonas': 'Manaus',
+            'Bahia': 'Salvador', 'Ceará': 'Fortaleza', 'Distrito Federal': 'Brasília', 'Espírito Santo': 'Vitória',
+            'Goiás': 'Goiânia', 'Maranhão': 'São Luís', 'Mato Grosso': 'Cuiabá', 'Mato Grosso do Sul': 'Campo Grande',
+            'Minas Gerais': 'Belo Horizonte', 'Pará': 'Belém', 'Paraíba': 'João Pessoa', 'Paraná': 'Curitiba',
+            'Pernambuco': 'Recife', 'Piauí': 'Teresina', 'Rio de Janeiro': 'Rio de Janeiro', 'Rio Grande do Norte': 'Natal',
+            'Rio Grande do Sul': 'Porto Alegre', 'Rondônia': 'Porto Velho', 'Roraima': 'Boa Vista', 'Santa Catarina': 'Florianópolis',
+            'São Paulo': 'São Paulo', 'Sergipe': 'Aracaju', 'Tocantins': 'Palmas'
+        };
+
+        async function popularCidadesIBGE() {
+            const estado = document.getElementById('estadoInput').value;
+            const cidadeSelect = document.getElementById('cidadeOpcionalInput');
+            const uf = ESTADOS_UF[estado];
+
+            cidadeSelect.innerHTML = '<option value="">Carregando cidades...</option>';
+            if (!uf) return;
+
+            try {
+                const resp = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`);
+                const municipios = await resp.json();
+                const nomes = municipios.map(m => m.nome);
+                const capital = CAPITAL_DO_ESTADO[estado];
+
+                nomes.sort((a, b) => {
+                    if (a === capital) return -1;
+                    if (b === capital) return 1;
+                    return a.localeCompare(b, 'pt-BR');
+                });
+
+                cidadeSelect.innerHTML = '<option value="">Nenhuma (busca padrão, sem triangulação)</option>' +
+                    nomes.map(n => `<option value="${n}">${n}${n === capital ? ' (capital)' : ''}</option>`).join('');
+            } catch (e) {
+                cidadeSelect.innerHTML = '<option value="">Não foi possível carregar cidades do IBGE agora</option>';
+                console.warn('[EDV Prospector] Falha ao buscar municípios do IBGE:', e.message);
+            }
         }
 
         // ------------------------------------------------------------------
@@ -438,6 +581,204 @@ out 20;`;
             return combinacoes.slice(0, quantidade);
         }
 
+        // ------------------------------------------------------------------
+        // DEDUPLICAÇÃO POR DISTÂNCIA DE LEVENSHTEIN
+        // ------------------------------------------------------------------
+        // Guarda os últimos termos realmente USADOS em buscas (não os apenas
+        // gerados) em localStorage, e descarta um termo novo se ele for
+        // quase idêntico a algo já buscado recentemente (ex: "Studio Beauty"
+        // vs "Studios Beauty" — mesma raiz, gastaria cota à toa).
+        const CHAVE_HISTORICO_TERMOS = 'edv_historico_termos';
+        const HISTORICO_TERMOS_MAX = 60;
+        const LEVENSHTEIN_LIMIAR = 2;
+
+        function distanciaLevenshtein(a, b) {
+            a = a.toLowerCase(); b = b.toLowerCase();
+            const m = a.length, n = b.length;
+            const d = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+            for (let i = 0; i <= m; i++) d[i][0] = i;
+            for (let j = 0; j <= n; j++) d[0][j] = j;
+            for (let i = 1; i <= m; i++) {
+                for (let j = 1; j <= n; j++) {
+                    const custo = a[i - 1] === b[j - 1] ? 0 : 1;
+                    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + custo);
+                }
+            }
+            return d[m][n];
+        }
+
+        function obterHistoricoTermos() {
+            try { return JSON.parse(localStorage.getItem(CHAVE_HISTORICO_TERMOS) || '[]'); }
+            catch (e) { return []; }
+        }
+
+        function registrarTermoNoHistorico(termo) {
+            const historico = obterHistoricoTermos();
+            historico.push(termo);
+            while (historico.length > HISTORICO_TERMOS_MAX) historico.shift();
+            try { localStorage.setItem(CHAVE_HISTORICO_TERMOS, JSON.stringify(historico)); } catch (e) { /* localStorage cheio, ignora */ }
+        }
+
+        function termoMuitoParecidoComHistorico(termo) {
+            return obterHistoricoTermos().some(anterior => distanciaLevenshtein(termo, anterior) <= LEVENSHTEIN_LIMIAR);
+        }
+
+        // ------------------------------------------------------------------
+        // PREFERÊNCIA PONDERADA POR RESULTADO NO PIPELINE (Vetor Alpha, com os pés no chão)
+        // ------------------------------------------------------------------
+        // O pedido original era usar Softmax para isso — implementei uma
+        // versão mais simples de propósito. Softmax/aprendizado por reforço
+        // de verdade precisa de MUITAS observações por "braço" pra separar
+        // sinal de ruído; uma empresa júnior fecha um punhado de negócios
+        // por mês, espalhados entre dezenas de termos diferentes. Com esse
+        // volume, pesos "aprendidos" seriam basicamente aleatórios vestidos
+        // de matemática. Isso aqui faz o mesmo trabalho prático — dar mais
+        // chance a termos que já geraram negócio fechado — sem fingir uma
+        // precisão estatística que os dados não sustentam.
+        const CHAVE_PESOS_TERMOS = 'edv_pesos_termos';
+        const PESO_FECHADO = 5;
+        const PESO_PERDIDO = -1;
+
+        function obterPesosTermos() {
+            try { return JSON.parse(localStorage.getItem(CHAVE_PESOS_TERMOS) || '{}'); }
+            catch (e) { return {}; }
+        }
+
+        function atualizarPesoTermo(termo, delta) {
+            if (!termo) return;
+            const pesos = obterPesosTermos();
+            pesos[termo] = (pesos[termo] || 0) + delta;
+            try { localStorage.setItem(CHAVE_PESOS_TERMOS, JSON.stringify(pesos)); } catch (e) { /* ignora */ }
+        }
+
+        // Escolhe os termos finais para a busca: gera candidatos, descarta os
+        // muito parecidos com o histórico recente (Levenshtein), e entre os
+        // que sobraram, dá preferência (não exclusividade) aos termos com
+        // peso positivo — um "sorteio ponderado" simples, não Softmax.
+        function selecionarTermosParaBusca(nicho, maxTermos) {
+            const pesos = obterPesosTermos();
+            let candidatos = [];
+            let tentativas = 0;
+
+            while (candidatos.length < maxTermos * 3 && tentativas < 8) {
+                gerarTermosCombinados(nicho).forEach(t => {
+                    if (!termoMuitoParecidoComHistorico(t) && !candidatos.includes(t)) candidatos.push(t);
+                });
+                tentativas++;
+            }
+
+            if (candidatos.length === 0) candidatos = gerarTermosCombinados(nicho); // fallback: Levenshtein descartou tudo, usa mesmo assim
+
+            // Sorteio ponderado: peso 0 vira "1 bilhete", peso positivo ganha
+            // bilhetes extras (proporcional, com piso em 0 pra não sortear
+            // negativo com chance maior que zero — só reduz a prioridade).
+            const bilhetes = [];
+            candidatos.forEach(termo => {
+                const peso = Math.max(0, pesos[termo] || 0);
+                const qtdBilhetes = 1 + Math.round(peso);
+                for (let i = 0; i < qtdBilhetes; i++) bilhetes.push(termo);
+            });
+
+            const escolhidos = [];
+            while (escolhidos.length < maxTermos && bilhetes.length > 0) {
+                const idx = Math.floor(Math.random() * bilhetes.length);
+                const termo = bilhetes[idx];
+                if (!escolhidos.includes(termo)) escolhidos.push(termo);
+                for (let i = bilhetes.length - 1; i >= 0; i--) if (bilhetes[i] === termo) bilhetes.splice(i, 1);
+            }
+
+            return escolhidos;
+        }
+
+        // ------------------------------------------------------------------
+        // SATURAÇÃO DE TERMO E MUTAÇÃO SEMÂNTICA VIA GROQ (Vetor Beta, simplificado)
+        // ------------------------------------------------------------------
+        // O pedido original falava em monitorar a "derivada da curva
+        // logística de extração". Isso pressupõe repetir a MESMA busca
+        // várias vezes pra observar uma taxa caindo — não é isso que
+        // acontece aqui (cada termo só é buscado uma vez por rodada). O que
+        // dá pra medir de verdade, num único resultado, é mais simples: dos
+        // itens que a Tavily devolveu pra esse termo, quantos já eram leads
+        // conhecidos? Se a maioria já era conhecida, o termo "saturou" —
+        // mesma ideia prática, sem inventar uma derivada que não existe.
+        const LIMIAR_SATURACAO = 0.75; // 75%+ dos resultados já eram conhecidos
+
+        async function avaliarSaturacaoEMutar(nicho, termo, itensRetornados, novosDesteTermo) {
+            if (itensRetornados < 3) return; // amostra pequena demais pra significar algo
+            const taxaDuplicados = 1 - (novosDesteTermo / itensRetornados);
+            if (taxaDuplicados < LIMIAR_SATURACAO) return;
+
+            const categoria = CATEGORIA_DO_NICHO[nicho];
+            const padroes = MATRIZ_PADROES[categoria];
+            if (!padroes) return;
+
+            try {
+                const resp = await fetch(`${WORKER_URL}/api/mutate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ termo, nicho, prefixosAtuais: padroes.prefixos, sufixosAtuais: padroes.sufixos })
+                });
+                const dados = await resp.json();
+                if (dados.error || !dados.prefixos || !dados.sufixos) return; // best-effort — não quebra o fluxo se falhar
+
+                // Injeta os termos novos na matriz em memória (dura até recarregar
+                // a página — não reescreve o arquivo .html sozinho, isso não é
+                // possível a partir do navegador). Persistimos em localStorage
+                // pra sobreviver a um F5 dentro da mesma sessão de trabalho.
+                padroes.prefixos = Array.from(new Set([...padroes.prefixos, ...dados.prefixos])).slice(-8);
+                padroes.sufixos = Array.from(new Set([...padroes.sufixos, ...dados.sufixos])).slice(-8);
+                try { localStorage.setItem('edv_matriz_padroes_override', JSON.stringify(MATRIZ_PADROES)); } catch (e) { /* ignora */ }
+
+                console.info('[EDV Prospector] Termo "' + termo + '" saturado — vocabulário de "' + categoria + '" ampliado via Groq:', dados.prefixos, dados.sufixos);
+            } catch (e) {
+                console.warn('[EDV Prospector] Mutação semântica falhou (não crítico):', e.message);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // MATURIDADE DE DOMÍNIO (WHOIS via who-dat, best-effort)
+        // ------------------------------------------------------------------
+        // Não existe API pública e gratuita do Registro.br em si. who-dat
+        // (github.com/lissy93/who-dat) é um proxy WHOIS/RDAP open-source de
+        // terceiro, sem CORS e sem chave — mas é mantido por outra pessoa, sem
+        // SLA. Por isso: timeout curto, nunca lança exceção pro chamador, e o
+        // schema de "não encontrado" não é documentado publicamente — então só
+        // confiamos no sinal mais simples e defensável (200 sem campo de erro
+        // = domínio existe). Cache em memória por sessão pra não repetir a
+        // mesma consulta se o assessor reabrir o mesmo lead.
+        const WHOIS_TIMEOUT_MS = 4000;
+        const _cacheDominioWhois = {};
+
+        async function verificarDominioWhois(nomeEmpresa) {
+            const slug = String(nomeEmpresa || '')
+                .toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9]+/g, '');
+            if (!slug) return null;
+
+            const dominio = slug + '.com.br';
+            if (dominio in _cacheDominioWhois) return _cacheDominioWhois[dominio];
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), WHOIS_TIMEOUT_MS);
+            try {
+                const resp = await fetch(`https://who-dat.as93.net/${dominio}`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (!resp.ok) {
+                    _cacheDominioWhois[dominio] = { dominio, existe: false };
+                    return _cacheDominioWhois[dominio];
+                }
+                const dados = await resp.json();
+                const existe = !dados.error && !dados.message; // sinal defensivo, sem depender de campo específico do schema
+                _cacheDominioWhois[dominio] = { dominio, existe };
+                return _cacheDominioWhois[dominio];
+            } catch (e) {
+                clearTimeout(timeoutId);
+                console.warn('[EDV Prospector] Checagem WHOIS falhou (não crítico, seguindo sem esse sinal):', e.message);
+                return null; // desconhecido — não usa o sinal, não bloqueia o fluxo
+            }
+        }
+
         async function rodarRadar() {
             const nicho = document.getElementById('nichoInput').value;
             const estado = document.getElementById('estadoInput').value;
@@ -451,9 +792,9 @@ out 20;`;
                 return;
             }
 
-            if(GOOGLE_PROXY_URL === "SEU_LINK_AQUI") {
+            if(WORKER_URL === "https://SEU-WORKER.workers.dev") {
                 loadEl.className = "text-red-600 mt-3 font-bold";
-                loadEl.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Você precisa configurar o seu Servidor Privado do Google primeiro!';
+                loadEl.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Você precisa configurar a URL do backend (WORKER_URL) primeiro! Veja edv-worker/README.md.';
                 loadEl.style.display = "block";
                 return;
             }
@@ -483,7 +824,8 @@ out 20;`;
                         const items = data.items || [];
                         items.forEach(item => {
                             const lead = extrairLeadDoItem(item, estado);
-                            if (lead && !currentLeads.find(l => l.url === lead.url)) {
+                            if (lead && !currentLeads.find(l => l.url === lead.url) && !leadEstaNaBlacklist(lead.url)) {
+                                lead.termoGerador = '(mapa) ' + nomeAlvo;
                                 currentLeads.push(lead);
                             }
                         });
@@ -498,7 +840,7 @@ out 20;`;
                         console.info('[EDV Prospector] Triangulação via mapa não disponível para "' + nicho + '" ou cidade não encontrada — usando geração de padrões de nome.');
                     }
 
-                    const termos = gerarTermosCombinados(nicho).slice(0, 3);
+                    const termos = selecionarTermosParaBusca(nicho, 3);
 
                     for (let i = 0; i < termos.length; i++) {
                         const termo = termos[i];
@@ -514,22 +856,29 @@ out 20;`;
                         // contexto). Sem "site:instagram.com" no texto — isso é
                         // sintaxe de operador do Google/DuckDuckGo, não da Tavily;
                         // a restrição de domínio já é feita à parte, via
-                        // include_domains no EDV_Scraper.gs.
+                        // include_domains no worker.
                         const query = `"${termo}" ${estado} Brasil`;
-                        const fetchUrl = `${GOOGLE_PROXY_URL}?q=${encodeURIComponent(query)}`;
+                        const fetchUrl = `${WORKER_URL}/api/search?q=${encodeURIComponent(query)}`;
                         const response = await fetch(fetchUrl);
                         const data = await response.json();
 
                         diagnosticarResposta(query, data);
                         if (data.error) throw new Error(data.error);
 
+                        registrarTermoNoHistorico(termo);
+
                         const items = data.items || [];
+                        let novosDesteTermo = 0;
                         items.forEach(item => {
                             const lead = extrairLeadDoItem(item, estado);
-                            if (lead && !currentLeads.find(l => l.url === lead.url)) {
+                            if (lead && !currentLeads.find(l => l.url === lead.url) && !leadEstaNaBlacklist(lead.url)) {
+                                lead.termoGerador = termo;
                                 currentLeads.push(lead);
+                                novosDesteTermo++;
                             }
                         });
+
+                        avaliarSaturacaoEMutar(nicho, termo, items.length, novosDesteTermo); // segundo plano, não bloqueia
                     }
                 }
 
@@ -818,7 +1167,7 @@ out 20;`;
                 if (data.error.toLowerCase().includes('limite mensal')) {
                     linhas.push('   → Cota gratuita do mês esgotada. Aguarde o próximo mês ou considere um plano pago da Tavily.');
                 } else {
-                    linhas.push('   → Confira se a TAVILY_API_KEY está correta no EDV_Scraper.gs.');
+                    linhas.push('   → Confira se a TAVILY_API_KEY está configurada corretamente como secret no Worker (wrangler secret put TAVILY_API_KEY).');
                 }
             } else {
                 const items = data.items || [];
@@ -919,6 +1268,8 @@ out 20;`;
                 selectEtapa.onclick = (ev) => ev.stopPropagation(); // não deixa o clique no select selecionar o lead
                 selectEtapa.onchange = (ev) => {
                     lead.etapaVenda = ev.target.value;
+                    if (ev.target.value === 'Fechado') atualizarPesoTermo(lead.termoGerador, PESO_FECHADO);
+                    else if (ev.target.value === 'Perdido') atualizarPesoTermo(lead.termoGerador, PESO_PERDIDO);
                     salvarEstado();
                 };
                 li.appendChild(selectEtapa);
@@ -1079,6 +1430,45 @@ out 20;`;
             window.open('https://busca.inpi.gov.br/pePI/jsp/marcas/Pesquisa_classe_basica.jsp', '_blank');
         }
 
+        // ------------------------------------------------------------------
+        // SINCRONIZAÇÃO COM CRM EXTERNO (n8n)
+        // ------------------------------------------------------------------
+        // Envia o lote atual de leads (currentLeads, o que está na tela do
+        // Radar agora) pro webhook do n8n, que decide o que fazer do lado de
+        // lá (planilha, CRM, etc.). Não bloqueia nem depende do CRM
+        // persistente local (edv_crm_pipeline) — são sistemas independentes.
+        async function sincronizarN8N() {
+            if (currentLeads.length === 0) return alert("Não há leads para sincronizar.");
+
+            const btn = document.getElementById('btnSincronizar');
+            const txtOriginal = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Enviando...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(N8N_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ leads: currentLeads, timestamp: new Date().toISOString() })
+                });
+
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+
+                btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i> Sincronizado';
+                btn.classList.replace('bg-purple-600', 'bg-green-600');
+
+                setTimeout(() => {
+                    btn.innerHTML = txtOriginal;
+                    btn.classList.replace('bg-green-600', 'bg-purple-600');
+                    btn.disabled = false;
+                }, 3000);
+            } catch (e) {
+                alert("Erro ao sincronizar CRM: " + e.message);
+                btn.innerHTML = txtOriginal;
+                btn.disabled = false;
+            }
+        }
+
         async function gerarCopy() {
             if (!selectedLead) return;
             const loadEl = document.getElementById('loadingGroq');
@@ -1100,32 +1490,46 @@ out 20;`;
                 O sócio/administrador registrado na Receita Federal é ${selectedLead.nomeDoSocio}. Escreva a copy se dirigindo NOMINALMENTE a essa pessoa (ex: "Olá, ${selectedLead.nomeDoSocio.split(' ')[0]}"), eliminando qualquer saudação corporativa genérica como "Prezados" ou "À empresa".`;
             }
 
-            const prompt = `
-                Somos EDV Jr, vendemos Registro de Marca.
-                Lead Encontrado: ${selectedLead.name} (@${selectedLead.handle} no ${selectedLead.platform}). Nicho do mercado: ${document.getElementById('nichoInput').value}.${contextoFiscal}${contextoSocio}
-                Retorne ESTRITAMENTE UM JSON com:
-                {"argumento_venda": "Parágrafo dizendo o risco deste nicho não registrar marca.", "copy_instagram": "Mensagem curta para tentar marcar reunião, adaptada ao canal (${selectedLead.platform})."}
-            `;
+            // Switch B2B/B2C: controla o tom da copy gerada.
+            const isB2B = document.getElementById('toggleB2B').checked;
+            contextoSocio += isB2B
+                ? `
+                ATENÇÃO: Abordagem ESTRITAMENTE corporativa (B2B), direta e assertiva. Foco em proteção de ativos e segurança jurídica.`
+                : `
+                ATENÇÃO: Abordagem empática e amigável (B2C), focada em proteger a identidade do negócio.`;
+
+            // Frente 4 — Maturidade de domínio: sinal best-effort via WHOIS
+            // (who-dat). Some silenciosamente se falhar ou for inconclusivo —
+            // não é uma confirmação jurídica, só mais um gatilho de dor.
+            const dadosWhois = await verificarDominioWhois(selectedLead.name);
+            if (dadosWhois && dadosWhois.existe === true) {
+                contextoFiscal += `
+                A empresa já opera com um domínio próprio (${dadosWhois.dominio}), mas isso não garante nenhum direito sobre o nome — quem registrar a marca primeiro no INPI pode inclusive contestar o uso do domínio. Use esse contraste (presença digital forte x zero proteção jurídica do nome) como gatilho de dor.`;
+            }
 
             try {
-                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                // O prompt agora é montado DENTRO do worker (server-side) — o
+                // client só manda os dados já qualificados do lead, nunca uma
+                // chave de API.
+                const response = await fetch(`${WORKER_URL}/api/copy`, {
                     method: "POST",
-                    headers: { "Authorization": "Bearer " + GROQ_API_KEY, "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        model: "llama-3.3-70b-versatile",
-                        messages: [{ role: "user", content: prompt }],
-                        temperature: 0.5
+                        nome: selectedLead.name,
+                        handle: selectedLead.handle,
+                        plataforma: selectedLead.platform,
+                        nicho: document.getElementById('nichoInput').value,
+                        contextoFiscal: contextoFiscal,
+                        contextoSocio: contextoSocio
                     })
                 });
-                const data = await response.json();
-                if (data.error) throw new Error(data.error.message);
-                
-                const jsonText = data.choices[0].message.content.replace(/```json/gi, "").replace(/```/gi, "").trim();
-                const aiResponse = JSON.parse(jsonText);
-                
+                const aiResponse = await response.json();
+                if (aiResponse.error) throw new Error(aiResponse.error);
+
                 document.getElementById('argumentoVenda').innerText = aiResponse.argumento_venda;
                 document.getElementById('copyInstagram').value = aiResponse.copy_instagram;
                 selectedLead.copyGerada = aiResponse; // guarda no lead para persistir no localStorage
+                adicionarNaBlacklist(selectedLead);
                 salvarEstado();
                 document.getElementById('copyResult').classList.remove('hidden');
                 document.getElementById('copyResult').classList.add('flex');
@@ -1140,6 +1544,82 @@ out 20;`;
         // O script está no final do <body>, então o DOM já existe — mas
         // usamos DOMContentLoaded mesmo assim por robustez (caso o script
         // seja movido para o <head> no futuro).
+        // ------------------------------------------------------------------
+        // NAVEGAÇÃO ENTRE ABAS E DASHBOARD DO PIPELINE
+        // ------------------------------------------------------------------
+        function mostrarAba(nome) {
+            const ehRadar = nome === 'radar';
+            document.getElementById('viewRadar').classList.toggle('hidden', !ehRadar);
+            document.getElementById('viewCRM').classList.toggle('hidden', ehRadar);
+            document.getElementById('navRadar').classList.toggle('tab-active', ehRadar);
+            document.getElementById('navRadar').classList.toggle('text-slate-300', !ehRadar);
+            document.getElementById('navCRM').classList.toggle('tab-active', !ehRadar);
+            document.getElementById('navCRM').classList.toggle('text-slate-300', ehRadar);
+            if (!ehRadar) renderCRM();
+        }
+
+        function renderCRM() {
+            const corpo = document.getElementById('corpoTabelaPipeline');
+            corpo.innerHTML = '';
+            document.getElementById('contadorPipeline').textContent = currentLeads.length + ' lead(s)';
+            document.getElementById('pipelineVazio').classList.toggle('hidden', currentLeads.length > 0);
+
+            currentLeads.forEach(lead => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b hover:bg-slate-50';
+                const tdEmpresa = document.createElement('td');
+                tdEmpresa.className = 'px-4 py-3 font-medium';
+                tdEmpresa.textContent = lead.name;
+                const tdSegmento = document.createElement('td');
+                tdSegmento.className = 'px-4 py-3 text-slate-500';
+                tdSegmento.textContent = document.getElementById('nichoInput').value || '—';
+                const tdTermo = document.createElement('td');
+                tdTermo.className = 'px-4 py-3 text-slate-500';
+                tdTermo.textContent = lead.termoGerador || '—';
+                const tdEstagio = document.createElement('td');
+                tdEstagio.className = 'px-4 py-3';
+                const badge = document.createElement('span');
+                badge.className = 'px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700';
+                badge.textContent = lead.etapaVenda || ETAPAS_VENDA[0];
+                tdEstagio.appendChild(badge);
+                tr.appendChild(tdEmpresa); tr.appendChild(tdSegmento); tr.appendChild(tdTermo); tr.appendChild(tdEstagio);
+                corpo.appendChild(tr);
+            });
+
+            renderBlacklistCRM();
+        }
+
+        function renderBlacklistCRM() {
+            const lista = document.getElementById('listaBlacklist');
+            lista.innerHTML = '';
+            const bl = obterBlacklist();
+            const entradas = Object.entries(bl);
+            document.getElementById('blacklistVazia').classList.toggle('hidden', entradas.length > 0);
+
+            entradas.forEach(([url, info]) => {
+                const dias = Math.floor((new Date() - new Date(info.dataEnvio)) / (1000 * 60 * 60 * 24));
+                const li = document.createElement('li');
+                li.className = 'p-4 flex items-center justify-between';
+
+                const div = document.createElement('div');
+                const pNome = document.createElement('p');
+                pNome.className = 'font-medium text-sm';
+                pNome.textContent = info.nome;
+                const pDetalhe = document.createElement('p');
+                pDetalhe.className = 'text-xs text-slate-400';
+                pDetalhe.textContent = '@' + info.handle + ' · enviado há ' + dias + ' dia(s) · ' + (dias >= DIAS_QUARENTENA ? 'já pode ser reativado' : 'ainda em quarentena (' + (DIAS_QUARENTENA - dias) + ' dia(s) restantes)');
+                div.appendChild(pNome); div.appendChild(pDetalhe);
+
+                const btn = document.createElement('button');
+                btn.className = 'text-xs px-3 py-1.5 rounded bg-slate-800 text-white';
+                btn.textContent = 'Reativar';
+                btn.onclick = () => { removerDaBlacklist(url); renderBlacklistCRM(); };
+
+                li.appendChild(div); li.appendChild(btn);
+                lista.appendChild(li);
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', carregarEstado);
         if (document.readyState === 'interactive' || document.readyState === 'complete') {
             carregarEstado();
